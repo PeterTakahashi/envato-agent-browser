@@ -23,7 +23,14 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from .browser import AgentBrowserError, Browser, BrowserConfig
-from .envato import HOME_URL, KNOWN_ITEM_TYPES, SIGN_IN_URL, item_url, search_url
+from .envato import (
+    DOWNLOADS_URL,
+    HOME_URL,
+    KNOWN_ITEM_TYPES,
+    SIGN_IN_URL,
+    item_url,
+    search_url,
+)
 
 
 mcp = FastMCP("envato")
@@ -54,36 +61,61 @@ def _is_logged_in(b: Browser) -> bool:
         return False
 
 
+_PATH_TO_TYPE = {
+    "search/stock-video": "stock-video",
+    "stock-video": "stock-video",
+    "sound-effects": "sound-effect",
+    "music": "music",
+    "motion-graphics": "motion-graphic",
+    "photos": "photo",
+    "search/graphic-template": "graphic-template",
+    "search/presentation-template": "presentation-template",
+    "search/video-template": "video-template",
+    "search/3d": "3d",
+    "search/font": "font",
+    "search/add-on": "add-on",
+}
+
+
+def _decode_eval_json(raw: str) -> list[dict]:
+    try:
+        s = raw.strip().strip('"').replace('\\"', '"').replace("\\\\", "\\")
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return []
+
+
 def _parse_search_items(b: Browser) -> list[dict]:
     expr = (
         "JSON.stringify("
-        "Array.from(document.querySelectorAll('a[href*=\"/search/stock-video/\"], "
-        "a[href*=\"/search/sound-effect/\"], a[href*=\"/search/music/\"], "
-        "a[href*=\"/search/motion-graphic/\"], a[href*=\"/search/photo/\"]'))"
+        "Array.from(document.querySelectorAll("
+        "'a[href*=\"/search/stock-video/\"], a[href*=\"/sound-effects/\"], "
+        "a[href*=\"/music/\"], a[href*=\"/motion-graphics/\"], "
+        "a[href*=\"/photos/\"], a[href*=\"/search/graphic-template/\"], "
+        "a[href*=\"/search/presentation-template/\"], "
+        "a[href*=\"/search/video-template/\"], a[href*=\"/search/3d/\"], "
+        "a[href*=\"/search/font/\"], a[href*=\"/search/add-on/\"]'))"
         ".map(a => {"
-        "  const m = a.href.match(/\\/search\\/([\\w-]+)\\/([a-f0-9-]{36})/);"
+        "  const m = a.href.match(/app\\.envato\\.com(\\/[\\w\\-\\/]+?)\\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/);"
         "  if (!m) return null;"
-        "  const card = a.closest('[class*=\"card\"], [data-test-selector], li, div');"
+        "  const card = a.closest('[class*=\"card\"], [data-test-selector], li, article, div');"
         "  const title = (card && (card.getAttribute('aria-label') || "
         "    (card.querySelector('[class*=\"title\" i]') || {}).textContent)) || '';"
-        "  const author = ((card && card.querySelector('a[href*=\"/profile/\"]')) || {}).textContent || '';"
-        "  const preview = ((card && card.querySelector('video, img')) || {}).src || '';"
-        "  return {id: m[2], type: m[1], title: title.trim(), author: author.trim(), preview, url: a.href};"
+        "  const author = ((card && card.querySelector('a[href*=\"/profile/\"], a[href*=\"filter.portfolio=\"]')) || {}).textContent || '';"
+        "  const preview = ((card && card.querySelector('video, img, audio')) || {}).src || '';"
+        "  return {pathPrefix: m[1].replace(/^\\//, ''), id: m[2], title: title.trim(), "
+        "          author: author.trim(), preview, url: a.href};"
         "})"
         ".filter(Boolean))"
     )
-    raw = b.eval_js(expr)
-    try:
-        s = raw.strip().strip('"').replace('\\"', '"').replace("\\\\", "\\")
-        items = json.loads(s)
-    except json.JSONDecodeError:
-        items = []
+    items = _decode_eval_json(b.eval_js(expr))
     seen: set[str] = set()
     out: list[dict] = []
     for it in items:
         if it["id"] in seen:
             continue
         seen.add(it["id"])
+        it["type"] = _PATH_TO_TYPE.get(it.pop("pathPrefix", ""), "unknown")
         out.append(it)
     return out
 
@@ -252,6 +284,73 @@ def envato_download(
             files = [str(out / name) for name in zf.namelist()]
         final_path.unlink(missing_ok=True)
     return {"id": item_id, "type": item_type, "files": files, "count": len(files)}
+
+
+@mcp.tool(
+    description=(
+        "List the most recent items the signed-in account has downloaded "
+        "from Envato. Useful for cross-checking that an asset is already "
+        "present locally before re-downloading. Returns id, type, title, "
+        "author, page URL for each."
+    )
+)
+def envato_recent_downloads(
+    limit: Annotated[
+        int,
+        Field(description="maximum entries to return", ge=1, le=200),
+    ] = 30,
+) -> dict:
+    b = _get_browser()
+    b.open(DOWNLOADS_URL, wait=True, timeout=60.0)
+    expr = (
+        "JSON.stringify("
+        "Array.from(document.querySelectorAll("
+        "'a[href*=\"/stock-video/\"], a[href*=\"/sound-effects/\"], "
+        "a[href*=\"/music/\"], a[href*=\"/motion-graphics/\"], "
+        "a[href*=\"/photos/\"]'))"
+        ".map(a => {"
+        "  const m = a.href.match(/app\\.envato\\.com\\/([\\w\\-]+)\\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/);"
+        "  if (!m) return null;"
+        "  const card = a.closest('div, li, article');"
+        "  const text = (card && card.textContent.trim()) || '';"
+        "  const author = ((card && card.querySelector('a[href*=\"filter.portfolio=\"]')) "
+        "    || {}).textContent || '';"
+        "  return {pathPrefix: m[1], id: m[2], text: text.slice(0,200), "
+        "          author: author.trim(), url: a.href};"
+        "})"
+        ".filter(Boolean))"
+    )
+    items = _decode_eval_json(b.eval_js(expr))
+    seen: set[str] = set()
+    out: list[dict] = []
+    for it in items:
+        if it["id"] in seen:
+            continue
+        seen.add(it["id"])
+        prefix = it.pop("pathPrefix", "")
+        item_type = _PATH_TO_TYPE.get(prefix, "unknown")
+        # text typically looks like "0:15 • Burj KhalifaVegastock" — split out
+        # the duration token if present and strip the author suffix.
+        text = it.pop("text", "")
+        title = text
+        if " • " in text:
+            _, _, after = text.partition(" • ")
+            title = after
+        author = it.get("author", "")
+        if author and title.endswith(author):
+            title = title[: -len(author)]
+        out.append(
+            {
+                "id": it["id"],
+                "type": item_type,
+                "title": title.strip(),
+                "author": author,
+                "url": it["url"],
+            }
+        )
+        if len(out) >= limit:
+            break
+    return {"count": len(out), "items": out}
 
 
 def main() -> None:
