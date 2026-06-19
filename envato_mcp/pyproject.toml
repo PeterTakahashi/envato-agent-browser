@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "envato-mcp"
+version = "0.1.0"
+description = "MCP server for Envato Stock (search + download) via agent-browser"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "envato-agent-browser contributors" }]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.2.0",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+envato-mcp = "envato_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["envato_mcp"]
