@@ -272,13 +272,15 @@ def envato_download(
     b.open(url, wait=True, timeout=60.0)
     ref = _find_download_button_ref(b)
     b.click_ref(ref)
-    zip_path = b.wait_download_complete(timeout_s=timeout_seconds)
+    dl_path = b.wait_download_complete(timeout_s=timeout_seconds)
     out = Path(os.path.expanduser(out_dir))
     out.mkdir(parents=True, exist_ok=True)
-    final_path = out / zip_path.name
-    zip_path.replace(final_path)
+    final_path = out / dl_path.name
+    dl_path.replace(final_path)
     files = [str(final_path)]
-    if extract and final_path.suffix.lower() == ".zip":
+    # Envato delivers either a ZIP or the raw asset directly. Only extract
+    # when extract=True AND the file is genuinely a ZIP archive.
+    if extract and zipfile.is_zipfile(final_path):
         with zipfile.ZipFile(final_path, "r") as zf:
             zf.extractall(out)
             files = [str(out / name) for name in zf.namelist()]

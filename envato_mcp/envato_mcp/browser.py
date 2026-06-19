@@ -18,9 +18,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_SESSION = "envato"
-DEFAULT_PROFILE = Path(os.path.expanduser("~/.envato-mcp/profile"))
-DEFAULT_DOWNLOAD = Path(os.path.expanduser("~/.envato-mcp/downloads"))
+DEFAULT_SESSION = os.environ.get("ENVATO_MCP_SESSION", "envato")
+DEFAULT_PROFILE = Path(
+    os.path.expanduser(os.environ.get("ENVATO_MCP_PROFILE", "~/.envato-mcp/profile"))
+)
+DEFAULT_DOWNLOAD = Path(
+    os.path.expanduser(os.environ.get("ENVATO_MCP_DOWNLOADS", "~/.envato-mcp/downloads"))
+)
 
 
 class AgentBrowserError(RuntimeError):
